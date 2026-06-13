@@ -1,4 +1,4 @@
-from RSABreakerFunc import *
+from RSABreaker import *
 import argparse
 
 def args_parser():
