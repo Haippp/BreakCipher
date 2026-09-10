@@ -2,89 +2,147 @@ import sys
 from math import gcd
 import requests as req
 from Crypto.Util.number import long_to_bytes
-from gmpy2 import isqrt, iroot
-from .utility import decrypt
+from gmpy2 import mpz, isqrt, iroot
+from string import printable
+import time as t
 
-def continued_fraction(n, d):
-    if d == 0:
-        return []
-    q = n // d
-    r = n - q * d
-    return [q] + continued_fraction(d, r)
+def isPrintable(text:str) -> bool:
+    if all(t in printable for t in text):
+        return True
+    else:
+        return False
 
-def convergents(n, d):
-    hh, kk, h, k = 0, 1, 1, 0
-    for x in continued_fraction(n, d):
-        hh, kk, h, k = h, k, h * x + hh, k * x + kk
-        yield h, k
 
-def modinv(a, m):
-    return pow(a, -1, m)
+class RSAAttacks:
+    def __init__(self, c:int, n:int, e = 65537, max_time = 0):
+        self.c = c
+        self.e = e
+        self.n = n
+        self.factor = []
+        self.max_time = max_time
+        self.start = t.time()
 
-def searchFactorDB(ct: int, e: int,  n: int) -> bytes:
-    url = 'https://factordb.com/api?query='
+    def isMaxTime(self):
+        if t.time() - self.start > self.max_time:
+            return True
+        return False
 
-    print('[*] Melakukan pencarian pada https://factordb.com/')
-    factorDB = req.get(url + str(n)).json()
-    status = factorDB['status']; factor = factorDB['factors']
+    def isHaveFactor(self) -> bool:
+        if len(self.factor) == 0:
+            print("[!] cari factor terlebih dahulu")
+            return False
+        else: 
+            return True
 
-    match status:
-        case 'P':
-            print('[!] Status : Nilai n tersebut merupakan prima')
-            print('[*] Melanjutkan ke proses Decrypt')
-            pt = decrypt(ct, e, n, factor)
-        case 'FF':
-            print('[!] Status : Semua faktor primanya sudah diketahui')
-            print('[*] Melanjutkan ke proses Decrypt')
-            pt = decrypt(ct, e, n, factor)
-        case 'CF':
-            print('[!] Status : Sebagian faktor sudah diketahui, tapi mungkin belum lengkap')
-            return
-        case _:
-            print('[!] Status : Tidak menemukan faktornya')
-            return
+    def totient(self) -> int:
+        phi = 1
+        for f in self.factor:
+            try:
+                phi *= int(f[0]) - 1
+            except:
+                phi *= f - 1
+        return phi
+
+    def decrypt(self) -> bytes:
+        phi = self.totient()
+        d = pow(self.e, -1, phi)
+        print(d)
+        pt = long_to_bytes(pow(self.c, d, self.n))
+
+        try:
+            if isPrintable(flag := pt.decode()):
+                print('[+] ciphertext berhasil di decrypt :', flag)
+        except:
+            print(pt)
+        
+        return 
     
-    print(f'[+] Flag Ditemukan! {pt.decode()}\n\n')
-    return pt
+    def searchFactorDB(self) -> bytes:
+        url = 'https://factordb.com/api?query='
 
-def lowExp_attack(c, e):
-    pt, isRoot = iroot(c, e)
-    if isRoot:
-        return long_to_bytes(pt)
-    return
+        print('[*] Melakukan pencarian pada https://factordb.com/')
+        factorDB = req.get(url + str(self.n)).json()
+        status = factorDB['status']; self.factor = factorDB['factors']
+
+        match status:
+            case 'P':
+                print('[!] Status : Nilai n tersebut merupakan prima')
+                print('[*] Melanjutkan ke proses Decrypt')
+                pt = self.decrypt()
+            case 'FF':
+                print('[!] Status : Semua faktor primanya sudah diketahui')
+                print('[*] Melanjutkan ke proses Decrypt')
+                pt = self.decrypt()
+            case 'CF':
+                print('[!] Status : Sebagian faktor sudah diketahui, tapi mungkin belum lengkap')
+                return
+            case _:
+                print('[!] Status : Tidak menemukan faktornya')
+                return
+
+        # try:
+        #     print(f'[+] Flag Ditemukan! {pt.decode()}\n\n')
+        # except:
+        #     print(b'[+] Flag Ditemukan!: ' + pt)
+        
+        return pt
     
+    def fermat_factor(self) -> list:
+        print('[*] Melakukan pencarian factor menggunakan teori fermat factor')
+        a = isqrt(self.n)
+        if a * a < self.n:
+            a += 1
 
-def wienner_attack(c, e, n):
-    print('[*] Mencoba menggunakan wienner_attack')
-    p, q = 0, 0
-    for k, d in convergents(e, n):
-        if k != 0:
-            phi_n = (e * d - 1) // k
-            a, b, c = 1, n - phi_n + 1, n
-            delta = pow(b, 2) - 4 * a * c
-            if delta >= 0:
-                s1 = (-b + isqrt(delta)) // 2 * a
-                s2 = (-b - isqrt(delta)) // 2 * a
-                if n == s1 * s2:
-                    print('[+] P & Q di temukan, anda bisa lanjut keproses selanjutnya')
-                    factor = [int(abs(s1)), int(abs(s2))]
-                    return factor
+        while True:
 
-    print('[x] Mohon maaf serangan gagal')
-    return -1, -1
+            if self.isMaxTime():
+                print('[!] pencarian factor berhenti karena mencapai batas waktu')
+                return
+        
+            b2 = a * a - self.n
+            b = isqrt(b2)
 
-def common_modulus_attack(c1, c2, e1, e2, N):
-    g = gcd(e1, e2)
-    if g != 1:
-        print("Exponents e1 and e2 must be coprime!", file=sys.stderr)
-        sys.exit(1)
+            if b * b == b2:
+                print('[+] P & Q di temukan, anda bisa lanjut keproses selanjutnya')
+                self.factor = [a - b, a + b]
+                return self.factor
+            
+            a += 1
 
-    s1 = modinv(e1, e2)
-    s2 = (g - e1 * s1) // e2
+    def lowExp_attack(self):
+        pt, isRoot = iroot(self.c, self.e)
+        if isRoot:
+            return long_to_bytes(pt)
+        return
+    
+    def continued_fraction(self, n, d) -> int:
+        if d == 0:
+            return []
+        q = n // d
+        r = n - q * d
+        return [q] + self.continued_fraction(d, r)
 
-    temp = modinv(c2, N)
-    m1 = pow(c1, s1, N)
-    m2 = pow(temp, -s2, N)
-    r1 = (m1 * m2) % N
+    def convergents(self, n, d):
+        hh, kk, h, k = 0, 1, 1, 0
+        for x in self.continued_fraction(n, d):
+            hh, kk, h, k = h, k, h * x + hh, k * x + kk
+            yield h, k
 
-    return long_to_bytes(r1)
+    def wienner_attack(self):
+        print('[*] Mencoba menggunakan wienner_attack')
+        p, q = 0, 0
+        for k, d in self.convergents(self.e, self.n):
+            if k != 0:
+                phi_n = (self.e * d - 1) // k
+                a, b, c = 1, self.n - phi_n + 1, self.n
+                delta = pow(b, 2) - 4 * a * c
+                if delta >= 0:
+                    s1 = (-b + isqrt(delta)) // 2 * a
+                    s2 = (-b - isqrt(delta)) // 2 * a
+                    if self.n == s1 * s2:
+                        print('[+] P & Q di temukan, anda bisa lanjut keproses selanjutnya')
+                        self.factor = [int(abs(s1)), int(abs(s2))]
+                        return self.factor
+
+        print('[x] Mohon maaf serangan gagal')
+        return -1, -1
